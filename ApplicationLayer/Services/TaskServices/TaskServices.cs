@@ -12,6 +12,16 @@ namespace ApplicationLayer.Services.TaskServices
     public class TaskServices
     {
         private readonly ICommonProcess<Tareas> _commonProcess;
+        // Delegado para validar tareas antes de guardarlas
+        public Func<Tareas, bool> ValidateTask { get; set; } = tarea =>
+            !string.IsNullOrWhiteSpace(tarea.Description) && tarea.DueDate > DateTime.Now;
+
+        // Action para notificar cuando se crea o elimina una tarea
+        public Action<string> Notify { get; set; } = message => { Console.WriteLine($"Notificación: {message}"); };
+
+        // Func para calcular días restantes para completar una tarea
+        public Func<Tareas, int> DaysRemaining { get; set; } = tarea =>
+            (tarea.DueDate - DateTime.Now).Days;
         public TaskServices(ICommonProcess<Tareas> commonProcess)
         {
             _commonProcess = commonProcess;
@@ -58,9 +68,25 @@ namespace ApplicationLayer.Services.TaskServices
             var response = new Response<string>();
             try
             {
+                // Validación con delegado
+                if (!ValidateTask(tarea))
+                {
+                    response.Succesful = false;
+                    response.Message = "La tarea no es válida.";
+                    return response;
+                }
+
                 var result = await _commonProcess.AddAsync(tarea);
                 response.Message = result.Message;
                 response.Succesful = result.IsSuccess;
+
+                // Notificación con Action
+                if (result.IsSuccess)
+                    Notify?.Invoke($"Tarea creada: {tarea.Description}");
+
+                // Cálculo de días restantes con Func
+                if (result.IsSuccess)
+                    response.Message += $" Días restantes: {DaysRemaining(tarea)}";
             }
             catch (Exception e)
             {
