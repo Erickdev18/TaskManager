@@ -210,6 +210,49 @@ namespace ApplicationLayer.Services.TaskServices
             });
             return Task.FromResult(response);
         }
+
+        // Agrega una instancia de TaskCache
+        private readonly TaskCache _taskCache = new();
+
+        // Ejemplo: método para calcular el porcentaje de tareas completadas usando caché
+        public async Task<double> CalculateTaskCompletionRateAsync()
+        {
+            var cachedRate = _taskCache.GetCompletionRate();
+            if (cachedRate.HasValue)
+                return cachedRate.Value;
+
+            var tareas = await _commonProcess.GetAllAsync();
+            int total = tareas.Count();
+            int completadas = tareas.Count(t => t.Status == "Completed");
+            double rate = total == 0 ? 0 : (double)completadas / total * 100;
+            _taskCache.SetCompletionRate(rate);
+            return rate;
+        }
+
+        // método para filtrar tareas usando caché
+        public async Task<List<Tareas>> FilterTasksAsync(string status, DateTime? from = null, DateTime? to = null)
+        {
+            var cached = _taskCache.GetFilteredTasks(status, from, to);
+            if (cached != null)
+                return cached;
+
+            var tareas = await _commonProcess.GetAllAsync();
+            var filtered = tareas.Where(t =>
+                (string.IsNullOrEmpty(status) || t.Status == status) &&
+                (!from.HasValue || t.DueDate >= from.Value) &&
+                (!to.HasValue || t.DueDate <= to.Value)
+            ).ToList();
+
+            _taskCache.SetFilteredTasks(status, from, to, filtered);
+            return filtered;
+        }
+
+        // Limpia la caché cuando se modifica el conjunto de tareas
+        private void ClearCaches()
+        {
+            _taskCache.ClearCompletionRate();
+            _taskCache.ClearFilterCache();
+        }
     }
 }
 
