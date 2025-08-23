@@ -36,6 +36,29 @@ namespace TaskManager.Controllers
             var tarea = DomainLayer.Models.TaskFactory.CreateHighPriorityTask(descripcion);
             return await _service.AddTaskAllAsync(tarea);
         }
+
+        [HttpPost("completada")]
+        public async Task<ActionResult<Response<string>>> AddCompletedTask([FromBody] Tareas tareaDto)
+        {
+            var tarea = DomainLayer.Models.TaskFactory.CreateCompletedTask(
+                tareaDto.Description,
+                tareaDto.DueDate,
+                tareaDto.AdditionalData
+            );
+            return await _service.AddTaskAllAsync(tarea);
+        }
+
+        [HttpPost("personalizada")]
+        public async Task<ActionResult<Response<string>>> AddCustomTask([FromBody] Tareas tareaDto)
+        {
+            var tarea = DomainLayer.Models.TaskFactory.CreateCustomTask(
+                tareaDto.Description,
+                tareaDto.DueDate,
+                tareaDto.Status,
+                tareaDto.AdditionalData
+            );
+            return await _service.AddTaskAllAsync(tarea);
+        }
     }
     
 }

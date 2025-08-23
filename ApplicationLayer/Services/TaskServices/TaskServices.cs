@@ -124,12 +124,6 @@ namespace ApplicationLayer.Services.TaskServices
             }
             return response;
         }
-
-        public async Task<Response<string>> AddHighPriorityTaskAsync(string description, string additionalData = "")
-        {
-            var tarea = DomainLayer.Models.TaskFactory.CreateHighPriorityTask(description, additionalData);
-            return await AddTaskAllAsync(tarea);
-        }
     }
 }
 

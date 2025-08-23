@@ -9,7 +9,7 @@ namespace DomainLayer.Models
             return new Tareas
             {
                 Description = description,
-                DueDate = DateTime.Now.AddDays(1), // Vencimiento cercano
+                DueDate = DateTime.Now.AddDays(1),
                 Status = "Pending",
                 AdditionalData = additionalData
             };
@@ -20,12 +20,33 @@ namespace DomainLayer.Models
             return new Tareas
             {
                 Description = description,
-                DueDate = DateTime.Now.AddDays(7), // Vencimiento lejano
+                DueDate = DateTime.Now.AddDays(7),
                 Status = "Pending",
                 AdditionalData = additionalData
             };
         }
 
-        // Puedes agregar más métodos para otros tipos de tareas
+        public static Tareas CreateCompletedTask(string description, DateTime dueDate, string additionalData = "")
+        {
+            return new Tareas
+            {
+                Description = description,
+                DueDate = dueDate,
+                Status = "Completed",
+                AdditionalData = additionalData
+            };
+        }
+
+        // tarea personalizada con parámetros flexibles
+        public static Tareas CreateCustomTask(string description, DateTime dueDate, string status, string additionalData = "")
+        {
+            return new Tareas
+            {
+                Description = description,
+                DueDate = dueDate,
+                Status = status,
+                AdditionalData = additionalData
+            };
+        }
     }
 }
