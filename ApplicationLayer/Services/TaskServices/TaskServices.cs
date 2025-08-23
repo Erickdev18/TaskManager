@@ -6,12 +6,20 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Reactive.Subjects;
+using System.Collections.Concurrent;
 
 namespace ApplicationLayer.Services.TaskServices
 {
     public class TaskServices
     {
         private readonly ICommonProcess<Tareas> _commonProcess;
+
+        // Cola reactiva para procesar tareas secuencialmente
+        private readonly Subject<Func<Task>> _taskQueue = new();
+        private readonly ConcurrentQueue<Func<Task>> _pendingTasks = new();
+        private bool _isProcessing = false;
+
         // Delegado para validar tareas antes de guardarlas
         public Func<Tareas, bool> ValidateTask { get; set; } = tarea =>
             !string.IsNullOrWhiteSpace(tarea.Description) && tarea.DueDate > DateTime.Now;
@@ -25,7 +33,70 @@ namespace ApplicationLayer.Services.TaskServices
         public TaskServices(ICommonProcess<Tareas> commonProcess)
         {
             _commonProcess = commonProcess;
+
+            // Suscribirse al Subject para procesar tareas secuencialmente
+            _taskQueue.Subscribe(async taskFunc =>
+            {
+                _pendingTasks.Enqueue(taskFunc);
+                await ProcessQueueAsync();
+            });
         }
+
+        // Método para agregar una tarea a la cola
+        public void EnqueueTask(Func<Task> taskFunc)
+        {
+            _taskQueue.OnNext(taskFunc);
+        }
+
+        private readonly List<string> _failedTaskLogs = new(); // Lista para registrar errores
+
+        // Procesa la cola de tareas secuencialmente con manejo de errores
+        private async Task ProcessQueueAsync()
+        {
+            if (_isProcessing) return;
+            _isProcessing = true;
+
+            while (_pendingTasks.TryDequeue(out var nextTask))
+            {
+                int maxRetries = 3;
+                int attempt = 0;
+                bool success = false;
+
+                while (attempt < maxRetries && !success)
+                {
+                    try
+                    {
+                        await nextTask();
+                        success = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        attempt++;
+                        string errorMsg = $"Error procesando tarea (intento {attempt}): {ex.Message}";
+                        Notify?.Invoke(errorMsg);
+                        _failedTaskLogs.Add(errorMsg); // Registrar el error
+                        if (attempt < maxRetries)
+                            await Task.Delay(1000); // Espera 1 segundo antes de reintentar
+                    }
+                }
+
+                if (!success)
+                {
+                    string finalMsg = "La tarea ha fallado después de varios intentos.";
+                    Notify?.Invoke(finalMsg);
+                    _failedTaskLogs.Add(finalMsg); // Registrar el fallo definitivo
+                }
+            }
+
+            _isProcessing = false;
+        }
+
+        // Método para obtener los errores registrados
+        public IReadOnlyList<string> GetFailedTaskLogs()
+        {
+            return _failedTaskLogs.AsReadOnly();
+        }
+
         public async Task<Response<Tareas>> GetTaskAllAsync()
         {
             var response = new Response<Tareas>();
@@ -76,17 +147,17 @@ namespace ApplicationLayer.Services.TaskServices
                     return response;
                 }
 
-                var result = await _commonProcess.AddAsync(tarea);
-                response.Message = result.Message;
-                response.Succesful = result.IsSuccess;
-
-                // Notificación con Action
-                if (result.IsSuccess)
-                    Notify?.Invoke($"Tarea creada: {tarea.Description}");
-
-                // Cálculo de días restantes con Func
-                if (result.IsSuccess)
-                    response.Message += $" Días restantes: {DaysRemaining(tarea)}";
+                // Encolar la tarea para procesamiento secuencial
+                EnqueueTask(async () =>
+                {
+                    var result = await _commonProcess.AddAsync(tarea);
+                    response.Message = result.Message;
+                    response.Succesful = result.IsSuccess;
+                    if (result.IsSuccess)
+                        Notify?.Invoke($"Tarea creada: {tarea.Description}");
+                    if (result.IsSuccess)
+                        response.Message += $" Días restantes: {DaysRemaining(tarea)}";
+                });
             }
             catch (Exception e)
             {
@@ -94,35 +165,50 @@ namespace ApplicationLayer.Services.TaskServices
             }
             return response;
         }
-        public async Task<Response<string>> UpdateTaskAllAsync(Tareas tarea)
+        // Encolar actualización de tarea
+        public Task<Response<string>> UpdateTaskAllAsync(Tareas tarea)
         {
             var response = new Response<string>();
-            try
+            EnqueueTask(async () =>
             {
-                var result = await _commonProcess.UpdateAsync(tarea);
-                response.Message = result.Message;
-                response.Succesful = result.IsSuccess;
-            }
-            catch (Exception e)
-            {
-                response.Errors.Add(e.Message);
-            }
-            return response;
+                try
+                {
+                    var result = await _commonProcess.UpdateAsync(tarea);
+                    response.Message = result.Message;
+                    response.Succesful = result.IsSuccess;
+                    if (result.IsSuccess)
+                        Notify?.Invoke($"Tarea actualizada: {tarea.Description}");
+                }
+                catch (Exception e)
+                {
+                    response.Errors.Add(e.Message);
+                    Notify?.Invoke($"Error al actualizar tarea: {e.Message}");
+                }
+            });
+            return Task.FromResult(response);
         }
-        public async Task<Response<string>> DeleteTaskAllAsync(int id)
+
+        // Encolar eliminación de tarea
+        public Task<Response<string>> DeleteTaskAllAsync(int id)
         {
             var response = new Response<string>();
-            try
+            EnqueueTask(async () =>
             {
-                var result = await _commonProcess.DeleteAsync(id);
-                response.Message = result.Message;
-                response.Succesful = result.IsSuccess;
-            }
-            catch (Exception e)
-            {
-                response.Errors.Add(e.Message);
-            }
-            return response;
+                try
+                {
+                    var result = await _commonProcess.DeleteAsync(id);
+                    response.Message = result.Message;
+                    response.Succesful = result.IsSuccess;
+                    if (result.IsSuccess)
+                        Notify?.Invoke($"Tarea eliminada: {id}");
+                }
+                catch (Exception e)
+                {
+                    response.Errors.Add(e.Message);
+                    Notify?.Invoke($"Error al eliminar tarea: {e.Message}");
+                }
+            });
+            return Task.FromResult(response);
         }
     }
 }
