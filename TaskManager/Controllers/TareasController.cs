@@ -30,6 +30,12 @@ namespace TaskManager.Controllers
         [HttpDelete("{id}")]
         public async Task<ActionResult<Response<string>>> DeleteTaskAllAsync(int id)
             => await _service.DeleteTaskAllAsync(id);
+        [HttpPost("alta-prioridad")]
+        public async Task<ActionResult<Response<string>>> AddHighPriorityTask([FromBody] string descripcion)
+        {
+            var tarea = DomainLayer.Models.TaskFactory.CreateHighPriorityTask(descripcion);
+            return await _service.AddTaskAllAsync(tarea);
+        }
     }
     
 }
