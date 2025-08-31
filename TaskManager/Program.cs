@@ -4,6 +4,7 @@ using InfrastructureLayer.Repository.Commons;
 using DomainLayer.Models;
 using InfrastructureLayer.Repository.TaskRepository;
 using ApplicationLayer.Services.TaskServices;
+using ApplicationLayer.Services.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,6 +20,7 @@ builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddScoped<IAuthService, AuthService>();
 
 var app = builder.Build();
 
