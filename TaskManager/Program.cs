@@ -5,6 +5,7 @@ using DomainLayer.Models;
 using InfrastructureLayer.Repository.TaskRepository;
 using ApplicationLayer.Services.TaskServices;
 using ApplicationLayer.Services.Security;
+using TaskManager.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +22,7 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddSignalR();
 
 var app = builder.Build();
 
@@ -44,5 +46,6 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<TaskHub>("/taskHub");
 
 app.Run();

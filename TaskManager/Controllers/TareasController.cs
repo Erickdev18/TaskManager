@@ -3,6 +3,8 @@ using DomainLayer.DTO;
 using DomainLayer.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using TaskManager.Hubs;
 
 namespace TaskManager.Controllers
 {
@@ -10,10 +12,13 @@ namespace TaskManager.Controllers
     [ApiController]
     public class TareasController : ControllerBase
     {
+
+        private readonly IHubContext<TaskHub> _hubContext;
         private readonly TaskServices _service;
-        public TareasController(TaskServices service)
+        public TareasController(TaskServices service, IHubContext<TaskHub> hubContext)
         {
             _service = service;
+            _hubContext = hubContext;   
         }
         [HttpGet]
         public async Task <ActionResult<Response<Tareas>>> GetTaskAllAsync()
@@ -23,7 +28,13 @@ namespace TaskManager.Controllers
             => await _service.GetTaskByIdAllAsync(id);
         [HttpPost]
         public async Task<ActionResult<Response<string>>> AddTaskAllAsync(Tareas tarea)
-            => await _service.AddTaskAllAsync(tarea);
+            => await _service.AddTaskAllAsync(tarea)
+                .ContinueWith(async result =>
+                {
+                    if (result.Result.Succesful && _hubContext != null)
+                        await _hubContext.Clients.All.SendAsync("TaskCreated", tarea);
+                    return result.Result;
+                }).Unwrap();
         [HttpPut]
         public async Task<ActionResult<Response<string>>> UpdateTaskAllAsync(Tareas tarea)
             => await _service.UpdateTaskAllAsync(tarea);
@@ -59,6 +70,8 @@ namespace TaskManager.Controllers
             );
             return await _service.AddTaskAllAsync(tarea);
         }
+
     }
+
     
 }

@@ -11,7 +11,7 @@ using System.IdentityModel.Tokens.Jwt;
 
 namespace ApplicationLayer.Services.Security
 {
-    public class AuthService : IAuthService   
+    public class AuthService : IAuthService
     {
         public Task<string> GetToken(string correo, int edad)
         {
@@ -20,7 +20,7 @@ namespace ApplicationLayer.Services.Security
             var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key));
             var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
             var tokenHandler = new JwtSecurityTokenHandler();
-           
+
 
             var tokenDescriptor = new SecurityTokenDescriptor
             {
