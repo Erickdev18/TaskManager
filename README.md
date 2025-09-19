@@ -1,4 +1,4 @@
 # TaskManager
 
-Programa Task manager, Api con crud funcional y JWT implementado.
+Programa Task manager, Api con crud funcional y JWT implementado,funciones Lambda,SignalR.
 
