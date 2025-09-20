@@ -1,40 +1,37 @@
 ﻿using DomainLayer.DTO;
 using DomainLayer.Models;
 using InfrastructureLayer.Repository.Commons;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Reactive.Subjects;
 using System.Collections.Concurrent;
+using Microsoft.AspNetCore.SignalR;
+using TaskManager.Hubs;
 
 namespace ApplicationLayer.Services.TaskServices
 {
     public class TaskServices
     {
         private readonly ICommonProcess<Tareas> _commonProcess;
+        private readonly IHubContext<TaskHub> _hubContext;
 
         // Cola reactiva para procesar tareas secuencialmente
         private readonly Subject<Func<Task>> _taskQueue = new();
         private readonly ConcurrentQueue<Func<Task>> _pendingTasks = new();
         private bool _isProcessing = false;
 
-        // Delegado para validar tareas antes de guardarlas
         public Func<Tareas, bool> ValidateTask { get; set; } = tarea =>
             !string.IsNullOrWhiteSpace(tarea.Description) && tarea.DueDate > DateTime.Now;
 
-        // Action para notificar cuando se crea o elimina una tarea
         public Action<string> Notify { get; set; } = message => { Console.WriteLine($"Notificación: {message}"); };
 
-        // Func para calcular días restantes para completar una tarea
         public Func<Tareas, int> DaysRemaining { get; set; } = tarea =>
             (tarea.DueDate - DateTime.Now).Days;
-        public TaskServices(ICommonProcess<Tareas> commonProcess)
+
+        public TaskServices(ICommonProcess<Tareas> commonProcess,
+                            IHubContext<TaskHub> hubContext)
         {
             _commonProcess = commonProcess;
+            _hubContext = hubContext;
 
-            // Suscribirse al Subject para procesar tareas secuencialmente
             _taskQueue.Subscribe(async taskFunc =>
             {
                 _pendingTasks.Enqueue(taskFunc);
@@ -42,15 +39,13 @@ namespace ApplicationLayer.Services.TaskServices
             });
         }
 
-        // Método para agregar una tarea a la cola
         public void EnqueueTask(Func<Task> taskFunc)
         {
             _taskQueue.OnNext(taskFunc);
         }
 
-        private readonly List<string> _failedTaskLogs = new(); // Lista para registrar errores
+        private readonly List<string> _failedTaskLogs = new();
 
-        // Procesa la cola de tareas secuencialmente con manejo de errores
         private async Task ProcessQueueAsync()
         {
             if (_isProcessing) return;
@@ -74,9 +69,9 @@ namespace ApplicationLayer.Services.TaskServices
                         attempt++;
                         string errorMsg = $"Error procesando tarea (intento {attempt}): {ex.Message}";
                         Notify?.Invoke(errorMsg);
-                        _failedTaskLogs.Add(errorMsg); // Registrar el error
+                        _failedTaskLogs.Add(errorMsg);
                         if (attempt < maxRetries)
-                            await Task.Delay(1000); // Espera 1 segundo antes de reintentar
+                            await Task.Delay(1000);
                     }
                 }
 
@@ -84,14 +79,13 @@ namespace ApplicationLayer.Services.TaskServices
                 {
                     string finalMsg = "La tarea ha fallado después de varios intentos.";
                     Notify?.Invoke(finalMsg);
-                    _failedTaskLogs.Add(finalMsg); // Registrar el fallo definitivo
+                    _failedTaskLogs.Add(finalMsg);
                 }
             }
 
             _isProcessing = false;
         }
 
-        // Método para obtener los errores registrados
         public IReadOnlyList<string> GetFailedTaskLogs()
         {
             return _failedTaskLogs.AsReadOnly();
@@ -111,6 +105,7 @@ namespace ApplicationLayer.Services.TaskServices
             }
             return response;
         }
+
         public async Task<Response<Tareas>> GetTaskByIdAllAsync(int id)
         {
             var response = new Response<Tareas>();
@@ -134,12 +129,12 @@ namespace ApplicationLayer.Services.TaskServices
             }
             return response;
         }
+
         public async Task<Response<string>> AddTaskAllAsync(Tareas tarea)
         {
             var response = new Response<string>();
             try
             {
-                // Validación con delegado
                 if (!ValidateTask(tarea))
                 {
                     response.Succesful = false;
@@ -147,17 +142,27 @@ namespace ApplicationLayer.Services.TaskServices
                     return response;
                 }
 
-                // Encolar la tarea para procesamiento secuencial
+                var tcs = new TaskCompletionSource<Response<string>>();
+
                 EnqueueTask(async () =>
                 {
                     var result = await _commonProcess.AddAsync(tarea);
-                    response.Message = result.Message;
-                    response.Succesful = result.IsSuccess;
+                    var localResponse = new Response<string>
+                    {
+                        Message = result.Message,
+                        Succesful = result.IsSuccess
+                    };
                     if (result.IsSuccess)
+                    {
                         Notify?.Invoke($"Tarea creada: {tarea.Description}");
-                    if (result.IsSuccess)
-                        response.Message += $" Días restantes: {DaysRemaining(tarea)}";
+                        await _hubContext.Clients.All.SendAsync("ReceiveNewTask", tarea.Description);
+                        localResponse.Message += $" Días restantes: {DaysRemaining(tarea)}";
+                        ClearCaches();
+                    }
+                    tcs.SetResult(localResponse);
                 });
+
+                response = await tcs.Task;
             }
             catch (Exception e)
             {
@@ -165,56 +170,67 @@ namespace ApplicationLayer.Services.TaskServices
             }
             return response;
         }
-        // Encolar actualización de tarea
-        public Task<Response<string>> UpdateTaskAllAsync(Tareas tarea)
+
+        public async Task<Response<string>> UpdateTaskAllAsync(Tareas tarea)
         {
-            var response = new Response<string>();
+            var tcs = new TaskCompletionSource<Response<string>>();
+
             EnqueueTask(async () =>
             {
+                var response = new Response<string>();
                 try
                 {
                     var result = await _commonProcess.UpdateAsync(tarea);
                     response.Message = result.Message;
                     response.Succesful = result.IsSuccess;
                     if (result.IsSuccess)
+                    {
                         Notify?.Invoke($"Tarea actualizada: {tarea.Description}");
+                        ClearCaches();
+                    }
                 }
-                catch (Exception e)
+                catch (Exception e)         
                 {
                     response.Errors.Add(e.Message);
                     Notify?.Invoke($"Error al actualizar tarea: {e.Message}");
                 }
+                tcs.SetResult(response);
             });
-            return Task.FromResult(response);
+
+            return await tcs.Task;
         }
 
-        // Encolar eliminación de tarea
-        public Task<Response<string>> DeleteTaskAllAsync(int id)
+        public async Task<Response<string>> DeleteTaskAllAsync(int id)
         {
-            var response = new Response<string>();
+            var tcs = new TaskCompletionSource<Response<string>>();
+
             EnqueueTask(async () =>
             {
+                var response = new Response<string>();
                 try
                 {
                     var result = await _commonProcess.DeleteAsync(id);
                     response.Message = result.Message;
                     response.Succesful = result.IsSuccess;
                     if (result.IsSuccess)
+                    {
                         Notify?.Invoke($"Tarea eliminada: {id}");
+                        ClearCaches();
+                    }
                 }
                 catch (Exception e)
                 {
                     response.Errors.Add(e.Message);
                     Notify?.Invoke($"Error al eliminar tarea: {e.Message}");
                 }
+                tcs.SetResult(response);
             });
-            return Task.FromResult(response);
+
+            return await tcs.Task;
         }
 
-        // Agrega una instancia de TaskCache
         private readonly TaskCache _taskCache = new();
 
-        // Ejemplo: método para calcular el porcentaje de tareas completadas usando caché
         public async Task<double> CalculateTaskCompletionRateAsync()
         {
             var cachedRate = _taskCache.GetCompletionRate();
@@ -229,7 +245,6 @@ namespace ApplicationLayer.Services.TaskServices
             return rate;
         }
 
-        // método para filtrar tareas usando caché
         public async Task<List<Tareas>> FilterTasksAsync(string status, DateTime? from = null, DateTime? to = null)
         {
             var cached = _taskCache.GetFilteredTasks(status, from, to);
@@ -247,12 +262,13 @@ namespace ApplicationLayer.Services.TaskServices
             return filtered;
         }
 
-        // Limpia la caché cuando se modifica el conjunto de tareas
         private void ClearCaches()
         {
             _taskCache.ClearCompletionRate();
             _taskCache.ClearFilterCache();
         }
     }
+
+    
 }
 
